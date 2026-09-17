@@ -8,59 +8,34 @@
 데이터 깨짐 / 파싱 오류 (JSONDecodeError, CSV Parse Error): JSONL 파일이나 외부 CSV 파일의 특정 줄이 손상되었을 때 전체 프로그램이 중단되지 않고 해당 오류를 격리/건너뛰거나 알림 처리
 ID 미존재 오류: delete 또는 update 시 존재하지 않는 거래 ID(TX-XXXXXX)를 지정한 경우
 예산 미설정 상태 요약: 해당 월에 설정된 예산이 없을 때 연산 오류가 나지 않고 미설정 또는 안내 문구 출력 """
-
+""" 예외 처리 및 공통 데코레이터 """
 from functools import wraps
+import sys
+import logging
 
-#에러 변수 정의
+logging.basicConfig(filename="app.log", level=logging.INFO, encoding="utf-8")
+
 class DataError(Exception):
-    def __init__(self, message: str, value_name = None, matching = None):
+    def __init__(self, message: str, value_name=None, value=None):
         super().__init__(message)
+        self.message = message
         self.value_name = value_name
-        self.matching = matching
-
-#에러종류 정의
-class TypeError(DataError):
-    """타입 에러"""
-    pass
-
-class ValueError(DataError):
-    """값 에러"""
-    pass
-
-class NotFoundError(DataError):
-    """조회 에러"""
-    pass
-
-#에러 이벤트 처리
+        self.value = value
 
 def handle_errors(func):
-    """에러가 발생하면 튕기지 않게 잡아서 예쁘게 띄워주는 데코레이터"""
+    """에러를 잡아서 힌트와 함께 깔끔하게 출력하는 데코레이터"""
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
+            logging.info(f"실행: {func.__name__}")
             return func(*args, **kwargs)
-            
         except DataError as e:
-            print(f"[데이터 오류] {e}")
+            print(f"[오류] {e.message}")
             if e.value_name and e.value is not None:
                 print(f"👉 힌트: {e.value_name} 필드의 입력값 '{e.value}'을(를) 확인해 주세요.")
-            else:
-                print("👉 힌트: 입력 데이터의 형식이나 값을 다시 확인해 주세요.")
-
-        except TypeError as e:
-            print(f"[타입 오류] {e}")
-            print("👉 힌트: 입력 값의 타입이 잘못되었습니다.")
-            
-        except ValueError as e:
-            print(f"[값 오류] {e}")
-            print("👉 힌트: 입력 값이 유효하지 않거나 범위가 잘못되었습니다.")
-            
-        except NotFoundError as e:
-            print(f"[조회 오류] {e}")
-            print("👉 힌트: 요청하신 ID 또는 데이터가 존재하지 않습니다.")
-
+            sys.exit(1)
         except Exception as e:
-            # 예상치 못한 시스템 에러 (파일 손상, JSONDecodeError 등)
             print(f"[시스템 오류] 처리 중 에러가 발생했습니다: {e}")
-
+            logging.error(f"오류 발생: {e}", exc_info=True)
+            sys.exit(2)
     return wrapper

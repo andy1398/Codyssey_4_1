@@ -12,108 +12,98 @@ csv 로 변환해야됨
 - CSV Export: 저장된 JSON/JSONL 데이터를 읽어서 엑셀(Excel) 등에서 열람 가능한 CSV 파일로 전환/내보내기 합니다.
 - Generator(yield): 대용량 데이터 처리 시 메모리 과부하를 방지하기 위해 한 줄씩 스트리밍 처리합니다.
 """
-
+""" 데이터 저장, 로드 및 CSV 변환 모듈 """
 import json
 import csv
-from typing import List, Generator
+import os
+import tempfile
+from typing import Generator
 from transaction import transaction
-from budget import budget
-from catagory import Category
-# ==========================================
-# 1. JSON (JSONL) 내부 데이터 관리
-# ==========================================
 
-def _transaction_to_dict_gen(transactions: List[transaction]) -> Generator[dict, None, None]:
-    """[제너레이터] transaction 객체 리스트를 순회하며 딕셔너리 형태로 한 줄씩 내보냅니다."""
-    for tx in transactions:
-        yield {
-            "id": tx.id,
-            "money": tx.money,
-            "date": tx.date,
-            "memo": tx.memo,
-            "tags": tx.tags
-        }
+DATA_DIR = "./data"
+TX_FILE = os.path.join(DATA_DIR, "transactions.jsonl")
+CAT_FILE = os.path.join(DATA_DIR, "categories.json")
+BUG_FILE = os.path.join(DATA_DIR, "budgets.json")
 
-def save_json(filepath: str, transactions: List[transaction]):
-    """가계부 내역을 JSONL 파일로 안전하게 저장 (메인 저장소)"""
-    with open(filepath, 'w', encoding='utf-8') as f:
-        for item in _transaction_to_dict_gen(transactions):
-            f.write(json.dumps(item, ensure_ascii=False) + '\n')
-    print(f" 데이터가 성공적으로 저장되었습니다: {filepath}")
+def ensure_dir():
+    os.makedirs(DATA_DIR, exist_ok=True)
 
+# [원자적 저장] 임시 파일 작성 후 교체
+def safe_save_jsonl(filepath: str, data_list: list):
+    ensure_dir()
+    fd, temp_path = tempfile.mkstemp(dir=DATA_DIR, text=True)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        for item in data_list:
+            f.write(json.dumps(item if isinstance(item, dict) else item.to_dict(), ensure_ascii=False) + '\n')
+    os.replace(temp_path, filepath)
+
+# [제너레이터 스트리밍] 한 줄씩 로드
 def load_json_gen(filepath: str) -> Generator[transaction, None, None]:
-    """[제너레이터] JSONL 파일에서 한 줄씩 읽어와 transaction 객체로 불러옵니다."""
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    yield transaction(
-                        id=int(data["id"]),
-                        money=float(data["money"]),
-                        date=str(data["date"]),
-                        memo=str(data["memo"]),
-                        tags=str(data["tags"])
-                    )
-                except (json.JSONDecodeError, KeyError, ValueError) as e:
-                    print(f"경고: {line_num}번째 줄 손상된 데이터 건너뜀 -> {e}")
-                    continue
-    except FileNotFoundError:
-        print(f"ℹ {filepath} 파일이 없습니다. 빈 상태로 시작합니다.")
+    if not os.path.exists(filepath):
+        return
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+                yield transaction(
+                    id=str(d["id"]),
+                    money=int(d["money"]),
+                    date=str(d["date"]),
+                    category=str(d["category"]),
+                    type=str(d["type"]),
+                    memo=str(d.get("memo", "")),
+                    tags=str(d.get("tags", ""))
+                )
+            except Exception:
+                continue
 
-
-# ==========================================
-# 2. JSON 기반 데이터 -> CSV 변환 및 내보내기 (Export)
-# ==========================================
-
-def export_json_to_csv(json_filepath: str, csv_filepath: str):
-    """
-    저장되어 있는 JSONL 파일을 읽어서 CSV 파일로 변환 내보내기
-    (엑셀에서 한글이 깨지지 않도록 utf-8-sig 인코딩을 적용)
-    """
-    fieldnames = ["id", "money", "date", "memo", "tags"]
-
-    try:
-        # 1. JSONL 파일 읽기 제너레이터 연결
-        tx_generator = load_json_gen(json_filepath)
-
-        # 2. CSV 파일 쓰기
-        with open(csv_filepath, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader() # 헤더(열 이름) 작성
-
-            count = 0
-            # load_json_gen에서 한 줄씩 읽어온 객체를 CSV row로 즉시 변환해서 작성
-            for tx in tx_generator:
-                writer.writerow({
-                    "id": tx.id,
-                    "money": tx.money,
-                    "date": tx.date,
-                    "memo": tx.memo,
-                    "tags": tx.tags
-                })
-                count += 1
-
-        print(f"📊 CSV 내보내기 완료! (총 {count}건): {csv_filepath}")
-
-    except FileNotFoundError:
-        print(f" 내보낼 데이터 파일({json_filepath})이 존재하지 않습니다.")
-    except Exception as e:
-        print(f" CSV 내보내기 중 오류 발생: {e}")
-
-
-def export_memory_to_csv(transactions: List[transaction], csv_filepath: str):
-    """현재 메모리(프로그램) 상의 transaction 목록을 즉시 CSV로 내보내기"""
-    fieldnames = ["id", "money", "date", "memo", "tags"]
-    
-    with open(csv_filepath, 'w', newline='', encoding='utf-8-sig') as f:
+# CSV 내보내기 (Export)
+def export_to_csv(csv_path: str, transactions: list, month: str = None):
+    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+        fieldnames = ["date", "type", "category", "amount", "memo", "tags"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         
-        for tx_dict in _transaction_to_dict_gen(transactions):
-            writer.writerow(tx_dict)
-            
-    print(f"CSV 추출 완료: {csv_filepath}")
+        count = 0
+        for tx in transactions:
+            if month and not tx.date.startswith(month):
+                continue
+            writer.writerow({
+                "date": tx.date,
+                "type": tx.type,
+                "category": tx.category,
+                "amount": tx.money,
+                "memo": tx.memo,
+                "tags": tx.tags
+            })
+            count += 1
+    print(f"[완료] {csv_path} ({count} records)")
+
+# CSV 가져오기 (Import)
+def import_from_csv(csv_path: str, category_obj, tx_control):
+    imported, skipped = 0, 0
+    try:
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row["category"] not in category_obj.categories:
+                    skipped += 1
+                    continue
+                new_id = f"TX-{len(tx_control.transactions) + 1:06d}"
+                tx = transaction(
+                    id=new_id,
+                    money=int(row["amount"]),
+                    date=row["date"],
+                    category=row["category"],
+                    type=row["type"],
+                    memo=row.get("memo", ""),
+                    tags=row.get("tags", "")
+                )
+                tx_control.add_transaction(tx)
+                imported += 1
+        print(f"[완료] imported={imported}, skipped={skipped}")
+    except FileNotFoundError:
+        print("[오류] 가져올 CSV 파일이 없습니다.")
