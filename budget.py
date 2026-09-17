@@ -1,20 +1,18 @@
-""" 달마다 예산을 설정하고 조회한다 """
+""" 달마다 예산을 설정하고 조회한다   """
+#buget.py
 
 class budget:
-    def __init__(self):
-        self.budgets = []  # {'month': 'YYYY-MM', 'money': 100000} 리스트로 관리
-
-    def add_budget(self, month: str, money: int):
-        for b in self.budgets:
-            if b['month'] == month:
-                b['money'] = int(money)
-                print(f"[수정 완료] {month} 예산 {money}원")
+    def __init__(self, month, money):
+        self.budget = []
+    def add_budget(self, month, money):
+        num=len(self.budget)
+        for i in range(num):
+            if self.budget[i].month==month:
+                print("이미 해당 달의 예산이 존재합니다. 수정하려면 Y/N를 입력하세요.")
+                choice = input().upper()
+                self.modify_budget(money,i)
                 return
-        self.budgets.append({'month': month, 'money': int(money)})
-        print(f"[저장 완료] {month} 예산 {money}원")
+        self.budget.append({'month': month, 'money': money})
 
-    def get_budget(self, month: str):
-        for b in self.budgets:
-            if b['month'] == month:
-                return b['money']
-        return None
+    def modify_budget(self, money,index):
+        self.budget[index].money=money
